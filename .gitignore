@@ -1,0 +1,31 @@
+# Data files (too large for git)
+data/*.csv
+data/*.parquet
+data/*.zip
+data/images/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+.ipynb_checkpoints/
+
+# Model artifacts (optional)
+*.joblib
+*.pkl
+*.h5

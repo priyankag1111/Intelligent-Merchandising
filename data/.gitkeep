@@ -1,0 +1,7 @@
+# Place the three H&M Kaggle CSV files here:
+#   articles.csv
+#   customers.csv
+#   transactions_train.csv
+#
+# Download from:
+# https://www.kaggle.com/competitions/h-and-m-personalized-fashion-recommendations/data
