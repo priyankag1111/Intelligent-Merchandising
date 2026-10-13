@@ -9,6 +9,52 @@ from sklearn.metrics.pairwise import cosine_similarity
 import streamlit as st
 
 
+@st.cache_data(show_spinner="Calculating yearly product performance...")
+def yearly_product_performance(
+    transactions: pd.DataFrame,
+    articles: pd.DataFrame,
+    group_by: str = "product_type_name",
+) -> pd.DataFrame:
+    """Aggregate revenue, units, and buyers by year and product grouping."""
+    group_columns = {
+        "product_type_name",
+        "product_group_name",
+        "garment_group_name",
+        "colour_group_name",
+        "article_id",
+    }
+    if group_by not in group_columns:
+        raise ValueError(f"Unsupported product grouping: {group_by}")
+
+    if group_by == "article_id":
+        article_details = articles[["article_id", "prod_name"]].drop_duplicates("article_id")
+        data = transactions.merge(article_details, on="article_id", how="left")
+        data["product"] = (
+            data["prod_name"].fillna("Unnamed product")
+            + " ("
+            + data["article_id"].astype(str)
+            + ")"
+        )
+    else:
+        product_details = articles[["article_id", group_by]].drop_duplicates("article_id")
+        data = transactions.merge(product_details, on="article_id", how="left")
+        data["product"] = data[group_by].fillna("Unknown").astype(str)
+
+    data["year"] = pd.to_datetime(data["t_dat"]).dt.year
+    yearly = (
+        data.groupby(["year", "product"], as_index=False)
+        .agg(
+            revenue=("price", "sum"),
+            units=("article_id", "size"),
+            unique_buyers=("customer_id", "nunique"),
+        )
+        .sort_values(["year", "revenue"], ascending=[True, False])
+        .reset_index(drop=True)
+    )
+    yearly["avg_price"] = yearly["revenue"] / yearly["units"]
+    return yearly
+
+
 @st.cache_data(show_spinner="Computing product performance...")
 def product_performance(transactions: pd.DataFrame, articles: pd.DataFrame) -> pd.DataFrame:
     """Units, revenue, unique buyers, avg price per article."""

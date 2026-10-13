@@ -28,7 +28,13 @@ from recommendations import (
     build_item_item_cf,
     hybrid_recommend,
 )
-from product_analytics import product_performance, build_text_embeddings, find_similar_products, simple_market_basket
+from product_analytics import (
+    product_performance,
+    yearly_product_performance,
+    build_text_embeddings,
+    find_similar_products,
+    simple_market_basket,
+)
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -80,7 +86,10 @@ def load_all(sample_customers, min_date):
 with st.spinner("Loading and sampling H&M data..."):
     transactions, articles, customers = load_all(sample_customers, min_date)
 
-if not all((Path("data") / filename).exists() for filename in ["articles.csv", "customers.csv", "transactions_train.csv"]):
+if not all(
+    any((Path("data") / candidate).exists() for candidate in (filename, f"{filename}.zip"))
+    for filename in ["articles.csv", "customers.csv", "transactions_train.csv"]
+):
     st.info("Running in demo mode with generated sample data. Add the three Kaggle CSVs to data/ to use real H&M data.")
 
 summary = get_data_summary(transactions, articles, customers)
@@ -328,6 +337,188 @@ with tab4:
 with tab5:
     st.header("Product Performance & Similarity")
     st.markdown("Supports **Assortment** decisions – which styles to keep, promote or drop.")
+
+    st.subheader("Year-over-Year Business Performance")
+    st.caption(
+        "Revenue is the sum of recorded transaction prices and units are transaction rows. "
+        "Figures reflect the selected customer sample; incomplete calendar years are not annualized."
+    )
+    group_labels = {
+        "Product type": "product_type_name",
+        "Product group": "product_group_name",
+        "Garment group": "garment_group_name",
+        "Colour group": "colour_group_name",
+        "Article": "article_id",
+    }
+    group_label = st.selectbox("Compare products by", list(group_labels), key="yoy_group")
+    yearly = yearly_product_performance(
+        transactions,
+        articles,
+        group_by=group_labels[group_label],
+    )
+    years = sorted(yearly["year"].dropna().unique().tolist())
+    comparable_years = [year for year in years if year - 1 in years]
+
+    if not comparable_years:
+        st.info("At least two consecutive calendar years are needed for year-over-year comparisons.")
+    else:
+        selected_year = st.selectbox(
+            "Current year",
+            comparable_years,
+            index=len(comparable_years) - 1,
+            key="yoy_year",
+        )
+        prior_year = selected_year - 1
+        current_transactions = transactions[
+            pd.to_datetime(transactions["t_dat"]).dt.year == selected_year
+        ]
+        prior_transactions = transactions[
+            pd.to_datetime(transactions["t_dat"]).dt.year == prior_year
+        ]
+
+        def _year_total(data, column):
+            if column == "revenue":
+                return data["price"].sum()
+            if column == "units":
+                return len(data)
+            return data["customer_id"].nunique()
+
+        current_revenue = _year_total(current_transactions, "revenue")
+        prior_revenue = _year_total(prior_transactions, "revenue")
+        current_units = _year_total(current_transactions, "units")
+        prior_units = _year_total(prior_transactions, "units")
+        current_buyers = _year_total(current_transactions, "buyers")
+        prior_buyers = _year_total(prior_transactions, "buyers")
+        current_avg_price = current_revenue / current_units if current_units else 0
+        prior_avg_price = prior_revenue / prior_units if prior_units else 0
+
+        def _yoy_delta(current, prior):
+            if prior == 0:
+                return "No prior-year baseline"
+            change = (current / prior - 1) * 100
+            return f"{change:+.1f}% YoY"
+
+        metric_cols = st.columns(4)
+        metric_cols[0].metric(
+            f"Revenue · {selected_year}",
+            f"{current_revenue:,.2f}",
+            _yoy_delta(current_revenue, prior_revenue),
+        )
+        metric_cols[1].metric(
+            f"Units · {selected_year}",
+            f"{current_units:,}",
+            _yoy_delta(current_units, prior_units),
+        )
+        metric_cols[2].metric(
+            f"Buyers · {selected_year}",
+            f"{current_buyers:,}",
+            _yoy_delta(current_buyers, prior_buyers),
+        )
+        metric_cols[3].metric(
+            f"Avg. price · {selected_year}",
+            f"{current_avg_price:,.2f}",
+            _yoy_delta(current_avg_price, prior_avg_price),
+        )
+
+        annual_totals = (
+            yearly.groupby("year", as_index=False)[["revenue", "units"]]
+            .sum()
+            .sort_values("year")
+        )
+        trend_cols = st.columns(2)
+        with trend_cols[0]:
+            revenue_fig = px.line(
+                annual_totals,
+                x="year",
+                y="revenue",
+                markers=True,
+                title="Annual Revenue Trend",
+                labels={"year": "Year", "revenue": "Revenue (price units)"},
+            )
+            st.plotly_chart(revenue_fig, use_container_width=True)
+        with trend_cols[1]:
+            units_fig = px.line(
+                annual_totals,
+                x="year",
+                y="units",
+                markers=True,
+                title="Annual Units Sold",
+                labels={"year": "Year", "units": "Units"},
+            )
+            st.plotly_chart(units_fig, use_container_width=True)
+
+        product_comparison = (
+            yearly[yearly["year"] == selected_year][["product", "revenue", "units", "unique_buyers"]]
+            .merge(
+                yearly[yearly["year"] == prior_year][
+                    ["product", "revenue", "units", "unique_buyers"]
+                ].rename(
+                    columns={
+                        "revenue": "prior_revenue",
+                        "units": "prior_units",
+                        "unique_buyers": "prior_buyers",
+                    }
+                ),
+                on="product",
+                how="outer",
+            )
+            .fillna(0)
+        )
+        product_comparison["revenue_change"] = (
+            product_comparison["revenue"] - product_comparison["prior_revenue"]
+        )
+        product_comparison["revenue_yoy_pct"] = np.where(
+            product_comparison["prior_revenue"] > 0,
+            product_comparison["revenue_change"] / product_comparison["prior_revenue"] * 100,
+            np.nan,
+        )
+        product_comparison["units_yoy_pct"] = np.where(
+            product_comparison["prior_units"] > 0,
+            (product_comparison["units"] / product_comparison["prior_units"] - 1) * 100,
+            np.nan,
+        )
+
+        movers = pd.concat(
+            [
+                product_comparison.nlargest(5, "revenue_change"),
+                product_comparison.nsmallest(5, "revenue_change"),
+            ]
+        ).drop_duplicates("product")
+        movers["direction"] = np.where(movers["revenue_change"] >= 0, "Growth", "Decline")
+        movers_fig = px.bar(
+            movers.sort_values("revenue_change"),
+            x="revenue_change",
+            y="product",
+            color="direction",
+            orientation="h",
+            color_discrete_map={"Growth": "#168a52", "Decline": "#c43d3d"},
+            title=f"Biggest Revenue Movers · {prior_year} to {selected_year}",
+            labels={"revenue_change": "Revenue change (price units)", "product": group_label},
+        )
+        st.plotly_chart(movers_fig, use_container_width=True)
+
+        product_comparison["revenue_yoy"] = product_comparison["revenue_yoy_pct"].map(
+            lambda value: f"{value:+.1f}%" if pd.notna(value) else "New / no prior sales"
+        )
+        product_comparison["units_yoy"] = product_comparison["units_yoy_pct"].map(
+            lambda value: f"{value:+.1f}%" if pd.notna(value) else "New / no prior sales"
+        )
+        st.dataframe(
+            product_comparison.sort_values("revenue", ascending=False)[
+                [
+                    "product",
+                    "revenue",
+                    "prior_revenue",
+                    "revenue_change",
+                    "revenue_yoy",
+                    "units",
+                    "prior_units",
+                    "units_yoy",
+                ]
+            ].head(20),
+            use_container_width=True,
+            hide_index=True,
+        )
 
     perf = product_performance(transactions, articles)
 

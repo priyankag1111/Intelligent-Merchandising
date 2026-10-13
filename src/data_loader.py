@@ -17,6 +17,15 @@ TRANSACTIONS_FILE = "transactions_train.csv"
 DATA_DIR = Path(__file__).parent.parent / "data"
 
 
+def _local_data_path(filename: str) -> Path:
+    """Find a local CSV, whether stored directly or in a ZIP archive."""
+    csv_path = DATA_DIR / filename
+    zip_path = DATA_DIR / f"{filename}.zip"
+    if csv_path.exists():
+        return csv_path
+    return zip_path if zip_path.exists() else csv_path
+
+
 def _build_demo_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Create a small deterministic dataset for running without Kaggle files."""
     rng = np.random.default_rng(42)
@@ -59,7 +68,7 @@ def _build_demo_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
 
 @st.cache_data(show_spinner="Loading articles...")
 def load_articles(sample_frac: float = 1.0) -> pd.DataFrame:
-    path = DATA_DIR / ARTICLES_FILE
+    path = _local_data_path(ARTICLES_FILE)
     if not path.exists():
         st.error(f"Missing {ARTICLES_FILE}. Place it in the `data/` folder.")
         st.stop()
@@ -71,7 +80,7 @@ def load_articles(sample_frac: float = 1.0) -> pd.DataFrame:
 
 @st.cache_data(show_spinner="Loading customers...")
 def load_customers(sample_frac: float = 1.0) -> pd.DataFrame:
-    path = DATA_DIR / CUSTOMERS_FILE
+    path = _local_data_path(CUSTOMERS_FILE)
     if not path.exists():
         st.error(f"Missing {CUSTOMERS_FILE}. Place it in the `data/` folder.")
         st.stop()
@@ -91,7 +100,7 @@ def load_transactions(
     Load transactions and sample a manageable number of customers.
     Full dataset is ~32M rows – sampling is essential for Streamlit.
     """
-    path = DATA_DIR / TRANSACTIONS_FILE
+    path = _local_data_path(TRANSACTIONS_FILE)
     if not path.exists():
         st.error(f"Missing {TRANSACTIONS_FILE}. Place it in the `data/` folder.")
         st.stop()
@@ -127,7 +136,11 @@ def get_merged_data(
     min_date: str = "2019-09-01",
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Return (transactions, articles, customers) ready for analysis."""
-    required_files = [DATA_DIR / ARTICLES_FILE, DATA_DIR / CUSTOMERS_FILE, DATA_DIR / TRANSACTIONS_FILE]
+    required_files = [
+        _local_data_path(ARTICLES_FILE),
+        _local_data_path(CUSTOMERS_FILE),
+        _local_data_path(TRANSACTIONS_FILE),
+    ]
     if not all(path.exists() for path in required_files):
         return _build_demo_data()
 

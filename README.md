@@ -27,7 +27,7 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
 # 3. Add data
-# Download from Kaggle and place these three files in the data/ folder:
+# Download from Kaggle and place these three files (CSV or .csv.zip) in the data/ folder:
 #   - articles.csv
 #   - customers.csv
 #   - transactions_train.csv
